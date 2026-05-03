@@ -571,53 +571,45 @@ const CAN_COLORS = [
 ];
 
 // ═══════════════════════════════════════════════════
-//  E-VARIO AUDIO ENGINE  — iOS-bulletproof
-//
-//  iOS Safari friert AudioContext ein bis ein echter
-//  touchstart/click direkt auf dem Dokument landet.
-//  Lösung: globaler einmaliger Unlock-Listener +
-//  Web-Audio lookahead scheduling (kein setInterval).
+//  E-VARIO AUDIO ENGINE  — new Audio() approach
+//  Verwendet eingebettete WAV-Datei (Base64) und
+//  new Audio() – das einzige was auf iOS Safari
+//  zuverlässig ohne Einschränkungen funktioniert.
 // ═══════════════════════════════════════════════════
-let audioCtx = null;
-let audioUnlocked = false;
-let varioNextBeepAt = 0;
-let varioActive = false;
 
-function ensureAudio() {
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+// 420 Hz Piepton als eingebettetes WAV (Base64)
+const BEEP_SRC = 'data:audio/wav;base64,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';
+
+// Pool von Audio-Objekten für schnelles Abspielen (iOS braucht vorbereitete Objekte)
+const POOL_SIZE = 8;
+let beepPool = [];
+let poolIdx = 0;
+let poolReady = false;
+
+// Muss einmalig aus einem User-Gesture heraus aufgerufen werden
+function prepareAudioPool() {
+  if (poolReady) return;
+  beepPool = [];
+  for (let i = 0; i < POOL_SIZE; i++) {
+    const a = new Audio(BEEP_SRC);
+    a.volume = 0.5;
+    a.load();
+    beepPool.push(a);
   }
-  if (audioCtx.state === 'suspended') {
-    audioCtx.resume();
-  }
+  poolReady = true;
 }
 
-// Spielt 1 Sample lautlos – entsperrt iOS AudioContext dauerhaft
-function unlockAudio() {
-  if (audioUnlocked) return;
-  ensureAudio();
+function playBeepNow() {
+  if (!poolReady) return;
+  const a = beepPool[poolIdx % POOL_SIZE];
+  poolIdx++;
+  // currentTime zurücksetzen damit es sofort spielen kann
   try {
-    const buf = audioCtx.createBuffer(1, 1, 22050);
-    const src = audioCtx.createBufferSource();
-    src.buffer = buf;
-    src.connect(audioCtx.destination);
-    src.start(0);
-    audioUnlocked = true;
+    a.currentTime = 0;
+    const p = a.play();
+    if (p && typeof p.catch === 'function') p.catch(() => {});
   } catch(e) {}
 }
-
-// Globaler Listener: beim allerersten Touch/Click auf der Seite
-// entsperren – BEVOR irgendein Spiel-Code läuft
-function setupAudioUnlock() {
-  const events = ['touchstart', 'touchend', 'mousedown', 'click'];
-  function onFirst(e) {
-    unlockAudio();
-    // Nach erstem Unlock alle Listener entfernen
-    events.forEach(ev => document.removeEventListener(ev, onFirst, true));
-  }
-  events.forEach(ev => document.addEventListener(ev, onFirst, true));
-}
-setupAudioUnlock();
 
 // Returns fill ratio 0..1
 function getStackFill() {
@@ -628,66 +620,37 @@ function getStackFill() {
   return Math.max(0, Math.min(1, (ROWS - topRow) / ROWS));
 }
 
-// Plant einen einzelnen Piepton zu Web-Audio-Zeit `when`
-function scheduleBeep(when, freq, dur) {
-  if (!audioCtx || !audioUnlocked) return;
-  if (audioCtx.state === 'suspended') audioCtx.resume();
-  try {
-    const osc  = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.connect(gain);
-    gain.connect(audioCtx.destination);
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(freq, when);
-    gain.gain.setValueAtTime(0, when);
-    gain.gain.linearRampToValueAtTime(0.22, when + 0.012);
-    gain.gain.setValueAtTime(0.18,          when + dur * 0.55);
-    gain.gain.linearRampToValueAtTime(0,    when + dur);
-    osc.start(when);
-    osc.stop(when + dur + 0.02);
-  } catch(e) {}
-}
+// Vario-Zustand
+let varioActive = false;
+let varioLastBeep = 0;   // performance.now() des letzten Pieptons
 
-// Wird jeden rAF-Frame aufgerufen – plant Pieptöne 150ms voraus
+// Wird jeden rAF-Frame aufgerufen
 function tickVario() {
-  if (!varioActive || !audioCtx || !audioUnlocked || paused || !gameRunning) return;
+  if (!varioActive || !poolReady || paused || !gameRunning) return;
 
   const fill = getStackFill();
   if (fill < 0.05) return;
 
-  // Feste tiefe Frequenz – kein Tonhöhenwechsel
-  const freq = 420;
+  // Intervall: exponentiell kürzer je voller der Stapel
+  const intervalMs = Math.max(60, 2000 * Math.pow(0.03, fill));
 
-  // Exponentiell kürzer werdendes Intervall
-  const interval = Math.max(0.06, 2.0 * Math.pow(0.03, fill));
-  const dur = 0.09;
-
-  const now = audioCtx.currentTime;
-  const lookahead = 0.15;
-
-  if (varioNextBeepAt < now) varioNextBeepAt = now;
-
-  while (varioNextBeepAt < now + lookahead) {
-    scheduleBeep(varioNextBeepAt, freq, dur);
+  const now = performance.now();
+  if (now - varioLastBeep >= intervalMs) {
+    varioLastBeep = now;
+    playBeepNow();
 
     // Vario-Dot visuell blinken
-    const delay = Math.max(0, (varioNextBeepAt - now) * 1000);
-    setTimeout(() => {
-      const dot = document.getElementById('vario-dot-m');
-      if (dot) {
-        dot.classList.add('beep');
-        setTimeout(() => dot.classList.remove('beep'), 80);
-      }
-    }, delay);
-
-    varioNextBeepAt += interval;
+    const dot = document.getElementById('vario-dot-m');
+    if (dot) {
+      dot.classList.add('beep');
+      setTimeout(() => dot.classList.remove('beep'), 80);
+    }
   }
 }
 
 function startVario() {
-  ensureAudio();
   varioActive = true;
-  varioNextBeepAt = audioCtx ? audioCtx.currentTime : 0;
+  varioLastBeep = 0;
 }
 
 function stopVario() {
@@ -1067,7 +1030,7 @@ function togglePause() {
   paused=!paused;
   document.getElementById('btn-pause').textContent = paused ? '▶ WEITER' : '⏸ PAUSE';
   if (paused) stopVario();
-  else { varioNextBeepAt = audioCtx ? audioCtx.currentTime : 0; startVario(); }
+  else { varioLastBeep = 0; startVario(); }
 }
 
 // ═══════════════════════════════════════════════════
@@ -1093,6 +1056,7 @@ function startGame() {
   gameRunning=true;
   stopVario();
   stopCountdown();
+  prepareAudioPool();  // iOS: Audio-Pool aus User-Gesture heraus vorbereiten
   startVario();
   current=randPiece(); next=randPiece();
   drawNext(); updateHUD(); hideOverlays();
