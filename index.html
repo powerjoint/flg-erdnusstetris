@@ -571,37 +571,55 @@ const CAN_COLORS = [
 ];
 
 // ═══════════════════════════════════════════════════
-//  E-VARIO AUDIO ENGINE  (iOS-compatible)
+//  E-VARIO AUDIO ENGINE  — iOS-bulletproof
 //
-//  Kein setInterval! Stattdessen Web-Audio-Scheduling
-//  direkt im rAF-Loop – das funktioniert auch auf iOS,
-//  weil der AudioContext einmalig im User-Gesture
-//  (startGame-Button) entsperrt wird und danach
-//  mit ac.currentTime weiter läuft.
+//  iOS Safari friert AudioContext ein bis ein echter
+//  touchstart/click direkt auf dem Dokument landet.
+//  Lösung: globaler einmaliger Unlock-Listener +
+//  Web-Audio lookahead scheduling (kein setInterval).
 // ═══════════════════════════════════════════════════
 let audioCtx = null;
-let varioNextBeepAt = 0;   // ac.currentTime des nächsten Pieptons
+let audioUnlocked = false;
+let varioNextBeepAt = 0;
 let varioActive = false;
 
 function ensureAudio() {
   if (!audioCtx) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   }
-  // iOS: nach User-Gesture resume aufrufen
-  if (audioCtx.state === 'suspended') audioCtx.resume();
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
 }
 
-// Einmaliger stiller Puffer – entsperrt iOS AudioContext sofort beim ersten Tap
+// Spielt 1 Sample lautlos – entsperrt iOS AudioContext dauerhaft
 function unlockAudio() {
+  if (audioUnlocked) return;
   ensureAudio();
-  const buf = audioCtx.createBuffer(1, 1, 22050);
-  const src = audioCtx.createBufferSource();
-  src.buffer = buf;
-  src.connect(audioCtx.destination);
-  src.start(0);
+  try {
+    const buf = audioCtx.createBuffer(1, 1, 22050);
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(audioCtx.destination);
+    src.start(0);
+    audioUnlocked = true;
+  } catch(e) {}
 }
 
-// Returns fill ratio 0..1 (how high the stack is)
+// Globaler Listener: beim allerersten Touch/Click auf der Seite
+// entsperren – BEVOR irgendein Spiel-Code läuft
+function setupAudioUnlock() {
+  const events = ['touchstart', 'touchend', 'mousedown', 'click'];
+  function onFirst(e) {
+    unlockAudio();
+    // Nach erstem Unlock alle Listener entfernen
+    events.forEach(ev => document.removeEventListener(ev, onFirst, true));
+  }
+  events.forEach(ev => document.addEventListener(ev, onFirst, true));
+}
+setupAudioUnlock();
+
+// Returns fill ratio 0..1
 function getStackFill() {
   let topRow = ROWS;
   for (let r = 0; r < ROWS; r++) {
@@ -610,9 +628,10 @@ function getStackFill() {
   return Math.max(0, Math.min(1, (ROWS - topRow) / ROWS));
 }
 
-// Schedules one beep-pip at Web-Audio time `when`
+// Plant einen einzelnen Piepton zu Web-Audio-Zeit `when`
 function scheduleBeep(when, freq, dur) {
-  if (!audioCtx) return;
+  if (!audioCtx || !audioUnlocked) return;
+  if (audioCtx.state === 'suspended') audioCtx.resume();
   try {
     const osc  = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
@@ -621,29 +640,26 @@ function scheduleBeep(when, freq, dur) {
     osc.type = 'sine';
     osc.frequency.setValueAtTime(freq, when);
     gain.gain.setValueAtTime(0, when);
-    gain.gain.linearRampToValueAtTime(0.2,  when + 0.012);
-    gain.gain.setValueAtTime(0.17,           when + dur * 0.55);
-    gain.gain.linearRampToValueAtTime(0,     when + dur);
+    gain.gain.linearRampToValueAtTime(0.22, when + 0.012);
+    gain.gain.setValueAtTime(0.18,          when + dur * 0.55);
+    gain.gain.linearRampToValueAtTime(0,    when + dur);
     osc.start(when);
-    osc.stop(when + dur + 0.01);
+    osc.stop(when + dur + 0.02);
   } catch(e) {}
 }
 
-// Called every rAF frame – schedules beeps slightly ahead (lookahead scheduling)
+// Wird jeden rAF-Frame aufgerufen – plant Pieptöne 150ms voraus
 function tickVario() {
-  if (!varioActive || !audioCtx || paused || !gameRunning) return;
+  if (!varioActive || !audioCtx || !audioUnlocked || paused || !gameRunning) return;
 
   const fill = getStackFill();
-  if (fill < 0.05) return;   // Stapel (fast) leer → kein Ton
+  if (fill < 0.05) return;
 
   // Feste tiefe Frequenz – kein Tonhöhenwechsel
-  const freq = 420;                                          // tiefer, satter Ton
+  const freq = 420;
 
-  // Intervall: exponentiell kürzer je voller der Stapel
-  // fill=0.05 → ~2.0s, fill=0.5 → ~0.5s, fill=1.0 → ~0.06s
+  // Exponentiell kürzer werdendes Intervall
   const interval = Math.max(0.06, 2.0 * Math.pow(0.03, fill));
-
-  // Pieptons-Dauer: kurzes Pip, bleibt konstant
   const dur = 0.09;
 
   const now = audioCtx.currentTime;
@@ -654,21 +670,22 @@ function tickVario() {
   while (varioNextBeepAt < now + lookahead) {
     scheduleBeep(varioNextBeepAt, freq, dur);
 
-    const blinkAt = (varioNextBeepAt - now) * 1000;
-    const t = Math.max(0, blinkAt);
+    // Vario-Dot visuell blinken
+    const delay = Math.max(0, (varioNextBeepAt - now) * 1000);
     setTimeout(() => {
       const dot = document.getElementById('vario-dot-m');
       if (dot) {
         dot.classList.add('beep');
         setTimeout(() => dot.classList.remove('beep'), 80);
       }
-    }, t);
+    }, delay);
 
     varioNextBeepAt += interval;
   }
 }
 
 function startVario() {
+  ensureAudio();
   varioActive = true;
   varioNextBeepAt = audioCtx ? audioCtx.currentTime : 0;
 }
@@ -678,8 +695,6 @@ function stopVario() {
 }
 
 function updateVario() {
-  // Wird nach jeder Dose aufgerufen – Intervall & Frequenz
-  // werden direkt in tickVario() neu berechnet, nichts zu tun hier.
   if (!varioActive && gameRunning && !paused) startVario();
 }
 
@@ -1078,8 +1093,6 @@ function startGame() {
   gameRunning=true;
   stopVario();
   stopCountdown();
-  // Unlock AudioContext on user gesture (critical for iOS)
-  try { unlockAudio(); } catch(e) {}
   startVario();
   current=randPiece(); next=randPiece();
   drawNext(); updateHUD(); hideOverlays();
