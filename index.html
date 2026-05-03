@@ -514,8 +514,9 @@ body::before {
           <p>Der Erdnusssektor ist überfüllt.<br>Aber die Werkstatt hat noch Platz!</p>
           <div class="werkstatt-callout">
             <div class="wc-title">⚙️ Nächste Werkstatt-Session</div>
-            <div class="wc-row"><span class="wc-day">FREITAG</span><span>ab 19:00 Uhr</span></div>
-            <div class="wc-row"><span class="wc-day">SAMSTAG</span><span>ab 14:00 Uhr</span></div>
+            <div id="werkstatt-countdown" style="font-family:'Fredoka One',cursive;font-size:14px;color:white;line-height:1.7;margin-top:4px;">
+              Berechne...
+            </div>
           </div>
           <button class="overlay-btn" onclick="startGame()">🔄 NOCHMAL STAPELN</button>
         </div>
@@ -786,6 +787,7 @@ function gameOver() {
   stopVario();
   document.getElementById('final-score').textContent = score;
   showOverlay('gameover');
+  startCountdown();
 }
 
 // ═══════════════════════════════════════════════════
@@ -1075,6 +1077,7 @@ function startGame() {
   paused=false;
   gameRunning=true;
   stopVario();
+  stopCountdown();
   // Unlock AudioContext on user gesture (critical for iOS)
   try { unlockAudio(); } catch(e) {}
   startVario();
@@ -1085,6 +1088,77 @@ function startGame() {
 
 window.startGame = startGame;
 window.togglePause = togglePause;
+
+// ═══════════════════════════════════════════════════
+//  WERKSTATT COUNTDOWN
+// ═══════════════════════════════════════════════════
+let countdownTimer = null;
+
+function getNextWerkstatt() {
+  const now = new Date();
+  const candidates = [];
+
+  // Check next 14 days to find the next Friday 19:00 and Saturday 14:00
+  for (let d = 0; d <= 13; d++) {
+    const date = new Date(now);
+    date.setDate(now.getDate() + d);
+    const dow = date.getDay(); // 0=Sun,1=Mon,...,5=Fri,6=Sat
+
+    if (dow === 5) { // Friday
+      date.setHours(19, 0, 0, 0);
+      if (date > now) candidates.push(date);
+    }
+    if (dow === 6) { // Saturday
+      date.setHours(14, 0, 0, 0);
+      if (date > now) candidates.push(date);
+    }
+  }
+
+  // Sort and return the soonest
+  candidates.sort((a, b) => a - b);
+  return candidates[0] || null;
+}
+
+function formatCountdown(target) {
+  const now = new Date();
+  let diff = Math.max(0, Math.floor((target - now) / 1000)); // seconds
+
+  const days    = Math.floor(diff / 86400); diff -= days * 86400;
+  const hours   = Math.floor(diff / 3600);  diff -= hours * 3600;
+  const minutes = Math.floor(diff / 60);    diff -= minutes * 60;
+  const seconds = diff;
+
+  const hh = String(hours).padStart(2, '0');
+  const mm = String(minutes).padStart(2, '0');
+  const ss = String(seconds).padStart(2, '0');
+
+  const dayStr = days === 1 ? '1 Tag' : (days > 1 ? `${days} Tage` : '');
+
+  if (days > 0) {
+    return `Noch ${dayStr} und ${hh}:${mm}:${ss}<br>bis zur nächsten Werkstatt!`;
+  } else {
+    return `Noch ${hh}:${mm}:${ss}<br>bis zur nächsten Werkstatt!`;
+  }
+}
+
+function startCountdown() {
+  const el = document.getElementById('werkstatt-countdown');
+  if (!el) return;
+
+  function tick() {
+    const target = getNextWerkstatt();
+    if (!target) { el.innerHTML = 'Werkstatt: Fr 19:00 · Sa 14:00'; return; }
+    el.innerHTML = formatCountdown(target);
+  }
+
+  tick(); // immediate first render
+  if (countdownTimer) clearInterval(countdownTimer);
+  countdownTimer = setInterval(tick, 1000);
+}
+
+function stopCountdown() {
+  if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+}
 
 window.addEventListener('resize',()=>{ computeSize(); drawBoard(); });
 computeSize();
