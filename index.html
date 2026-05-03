@@ -199,13 +199,44 @@ body::before {
   grid-row: 1 / -1;
 }
 
-/* ── SCORE PANEL (right side) ── */
+/* ── SCORE PANEL: desktop right, mobile top ── */
 .side-panel {
   position: absolute;
   right: -130px; top: 0;
   width: 118px;
   display: flex; flex-direction: column; gap: 10px;
 }
+.top-hud {
+  display: none;
+  width: 100%;
+  flex-direction: row;
+  gap: 5px;
+  padding: 5px 6px 0;
+  justify-content: space-between;
+  align-items: center;
+}
+@media (max-width: 600px) {
+  .side-panel { display: none !important; }
+  .top-hud    { display: flex !important; }
+  .announce-board { padding: 5px 10px 6px; }
+  .announce-board .club { font-size: 10px; letter-spacing: 0.06em; }
+}
+.top-hud .score-box {
+  flex: 1; padding: 4px 5px; border-radius: 8px;
+}
+.top-hud .score-box .value { font-size: 18px; }
+.top-hud .score-box .value.sm { font-size: 14px; }
+.top-hud .next-box {
+  padding: 4px 6px; border-radius: 8px;
+  display: flex; align-items: center; gap: 4px;
+}
+#next-preview-mobile { display: block; }
+.vario-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--green); box-shadow: 0 0 7px var(--green);
+  display: inline-block; transition: background 0.05s;
+}
+.vario-dot.beep { background: #fff; box-shadow: 0 0 14px #fff; }
 .score-box {
   background: linear-gradient(135deg, #2a1e12, #3d2a18);
   border: 2px solid var(--frame-dark);
@@ -377,6 +408,30 @@ body::before {
 </div>
 
 <div id="app">
+  <!-- Mobile top HUD (hidden on desktop via CSS) -->
+  <div class="top-hud" id="top-hud">
+    <div class="score-box">
+      <div class="label">Punkte</div>
+      <div class="value" id="score-disp-m">0</div>
+    </div>
+    <div class="score-box">
+      <div class="label">Level</div>
+      <div class="value" id="level-disp-m">1</div>
+    </div>
+    <div class="score-box">
+      <div class="label">Dosen</div>
+      <div class="value sm" id="cans-disp-m">0</div>
+    </div>
+    <div class="next-box">
+      <div class="label">↓</div>
+      <canvas id="next-preview-mobile" width="52" height="52"></canvas>
+    </div>
+    <div class="score-box" style="flex:0;padding:4px 8px;">
+      <div class="label">Vario</div>
+      <div style="margin-top:3px;"><span class="vario-dot" id="vario-dot-m"></span></div>
+    </div>
+  </div>
+
   <!-- Announcement board -->
   <div class="announce-board">
     <div class="club">⚙ FLG-Dettingen · Winter Werkstatt</div>
@@ -449,10 +504,11 @@ body::before {
 
       <div class="overlay hidden" id="overlay-gameover">
         <div class="overlay-card">
-          <h2>Stapel umgefallen!</h2>
+          <h2>Höhenfreigabe überschritten!</h2>
           <div class="big-score" id="final-score">0</div>
           <p style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:4px;">PUNKTE</p>
-          <p>Die Dosen liegen auf dem Boden.<br>Zeit für eine Pause in der Werkstatt!</p>
+          <p style="font-size:15px;font-weight:700;color:var(--gold);margin-bottom:8px;">Geh' lieber pollieren! 🪣</p>
+          <p>Der Erdnusssektor ist überfüllt.<br>Aber die Werkstatt hat noch Platz!</p>
           <div class="werkstatt-callout">
             <div class="wc-title">⚙️ Nächste Werkstatt-Session</div>
             <div class="wc-row"><span class="wc-day">FREITAG</span><span>ab 19:00 Uhr</span></div>
@@ -509,6 +565,78 @@ const CAN_COLORS = [
   { body: '#8a6a2a', lid: '#5a4218', badge: '#d62828', accent: '#c8a050' }, // honey roasted
   { body: '#1a6a6a', lid: '#0e3e3e', badge: '#f5c842', accent: '#3ab4b4' }, // teal edition
 ];
+
+// ═══════════════════════════════════════════════════
+//  E-VARIO AUDIO ENGINE
+// ═══════════════════════════════════════════════════
+let audioCtx = null;
+let varioInterval = null;
+let varioBeeping = false;
+
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+
+// Returns fill ratio 0..1 (how high the stack is)
+function getStackFill() {
+  let topRow = ROWS;
+  for (let r = 0; r < ROWS; r++) {
+    if (board[r].some(c => c !== null)) { topRow = r; break; }
+  }
+  // topRow=0 means full, topRow=ROWS means empty
+  return Math.max(0, Math.min(1, (ROWS - topRow) / ROWS));
+}
+
+function playBeep(freq, duration) {
+  try {
+    const ac = getAudioCtx();
+    const osc = ac.createOscillator();
+    const gain = ac.createGain();
+    osc.connect(gain); gain.connect(ac.destination);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq, ac.currentTime);
+    // Vario-style: quick attack, short sustain, fast release
+    gain.gain.setValueAtTime(0, ac.currentTime);
+    gain.gain.linearRampToValueAtTime(0.18, ac.currentTime + 0.01);
+    gain.gain.setValueAtTime(0.15, ac.currentTime + duration * 0.6);
+    gain.gain.linearRampToValueAtTime(0, ac.currentTime + duration);
+    osc.start(ac.currentTime);
+    osc.stop(ac.currentTime + duration);
+  } catch(e) {}
+}
+
+function updateVario() {
+  if (!gameRunning || paused) { stopVario(); return; }
+  const fill = getStackFill(); // 0 = empty, 1 = full
+
+  // Only beep when stack has something (fill > 0.05)
+  if (fill < 0.05) { stopVario(); return; }
+
+  // Beep frequency: low stack → ~900Hz (gentle), high stack → ~2200Hz (urgent)
+  const freq = 900 + fill * 1300;
+  // Beep interval: low stack → 1200ms, high stack → 100ms (rapid fire)
+  const interval = Math.max(100, 1200 - fill * 1100);
+  // Beep duration: short pip like a real vario
+  const dur = Math.max(0.04, 0.12 - fill * 0.08);
+
+  if (varioInterval) clearInterval(varioInterval);
+  varioInterval = setInterval(() => {
+    if (!gameRunning || paused) { stopVario(); return; }
+    playBeep(freq, dur);
+    // Flash vario dot
+    const dot = document.getElementById('vario-dot-m');
+    if (dot) {
+      dot.classList.add('beep');
+      setTimeout(() => dot.classList.remove('beep'), 80);
+    }
+  }, interval);
+}
+
+function stopVario() {
+  if (varioInterval) { clearInterval(varioInterval); varioInterval = null; }
+}
 
 // ═══════════════════════════════════════════════════
 //  GAME STATE
@@ -576,6 +704,7 @@ function place() {
   if (!isValid(current)) { gameOver(); return; }
   drawNext();
   updateHUD();
+  updateVario(); // recalculate beep rate after each placement
 }
 
 function clearLines() {
@@ -610,6 +739,7 @@ function spawnFloatPts(txt, lines) {
 
 function gameOver() {
   gameRunning = false;
+  stopVario();
   document.getElementById('final-score').textContent = score;
   showOverlay('gameover');
 }
@@ -737,19 +867,35 @@ function drawBoard() {
 
 function drawNext() {
   nextCtx.clearRect(0,0,80,80);
+  const mCv = document.getElementById('next-preview-mobile');
+  const mCtx = mCv ? mCv.getContext('2d') : null;
+  if (mCtx) mCtx.clearRect(0,0,52,52);
   if(!next) return;
   const s=next.shape, cs=16;
   const ox=Math.floor((80-s[0].length*cs)/2);
   const oy=Math.floor((80-s.length*cs)/2);
   for(let r=0;r<s.length;r++)
     for(let c=0;c<s[r].length;c++)
-      if(s[r][c]) drawCan(nextCtx,ox+c*cs,oy+r*cs,cs,next.color);
+      if(s[r][c]) {
+        drawCan(nextCtx,ox+c*cs,oy+r*cs,cs,next.color);
+        if (mCtx) {
+          const mcs=10, mox=Math.floor((52-s[0].length*mcs)/2), moy=Math.floor((52-s.length*mcs)/2);
+          drawCan(mCtx, mox+c*mcs, moy+r*mcs, mcs, next.color);
+        }
+      }
 }
 
 function updateHUD() {
   document.getElementById('score-disp').textContent = score;
   document.getElementById('level-disp').textContent = level;
   document.getElementById('cans-disp').textContent  = cansPlaced;
+  // mobile top-HUD
+  const sm = document.getElementById('score-disp-m');
+  const lm = document.getElementById('level-disp-m');
+  const cm = document.getElementById('cans-disp-m');
+  if (sm) sm.textContent = score;
+  if (lm) lm.textContent = level;
+  if (cm) cm.textContent = cansPlaced;
 }
 
 // ═══════════════════════════════════════════════════
@@ -784,11 +930,15 @@ function loop(ts) {
 //  SIZING: fit window frame into viewport
 // ═══════════════════════════════════════════════════
 function computeSize() {
-  const maxH = window.innerHeight - 220; // room for announce bar + controls
-  const maxW = window.innerWidth  - 160; // room for side panel
+  const isMobile = window.innerWidth <= 600;
+  // On mobile the top-hud takes ~60px extra; side panel is gone so full width available
+  const topHudH = isMobile ? 62 : 0;
+  const maxH = window.innerHeight - 220 - topHudH;
+  const sideW = isMobile ? 0 : 160;
+  const maxW = window.innerWidth - sideW;
   const cellH = Math.floor(maxH / ROWS);
   const cellW = Math.floor(maxW / COLS);
-  CELL = Math.max(20, Math.min(cellH, cellW, 44));
+  CELL = Math.max(18, Math.min(cellH, cellW, isMobile ? 38 : 44));
 
   const W = COLS * CELL, H = ROWS * CELL;
   canvas.width = W; canvas.height = H;
@@ -854,6 +1004,7 @@ function togglePause() {
   if(!gameRunning) return;
   paused=!paused;
   document.getElementById('btn-pause').textContent = paused ? '▶ WEITER' : '⏸ PAUSE';
+  if (paused) stopVario(); else updateVario();
 }
 
 // ═══════════════════════════════════════════════════
@@ -877,6 +1028,9 @@ function startGame() {
   score=0; level=1; cansPlaced=0; dropTimer=0; dropInterval=800; shakeAmt=0;
   paused=false;
   gameRunning=true;
+  stopVario();
+  // Unlock AudioContext on user gesture
+  try { getAudioCtx(); } catch(e) {}
   current=randPiece(); next=randPiece();
   drawNext(); updateHUD(); hideOverlays();
   document.getElementById('btn-pause').textContent='⏸ PAUSE';
